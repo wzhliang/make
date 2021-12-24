@@ -12,7 +12,7 @@ Features:
 1. Scale down workload for debugging purpose
 1. Deploy and rollback of workload
 1. Automatically install required tools
-1. Self update core `Makefile.incl`
+1. Self update 😎 core `Makefile.incl`
 
 All with simple `make` commands
 
