@@ -183,7 +183,7 @@ install-tools:
 	chmod a+x /usr/local/bin/mo
 
 update-make:
-	@curl -sLo ${TOP_DIR}/Makefile.incl https://github.com/wzhliang/make/raw/master/Makefile.incl
+	@curl -sLo ${TOP_DIR}/Makefile.incl https://raw.githubusercontent.com/wzhliang/make/main/Makefile.incl
 
 local-env:
 	@sudo kubefwd svc -n ${NAMESPACES} -c ${KUBECONFIG} || echo "\n\n\nMake sure you have proper KUBECONFIG value!"
