@@ -1,0 +1,208 @@
+##################################
+# !!! DO NOT MODIFY THIS FILE !!!
+##################################
+
+.PHONY: clean docker docker-arm release build apitest test deploy rollback logs help shell install-tools spec
+
+# Project Makefile should change the following
+TOP_DIR ?= ./
+RELEASE ?=
+PROG ?=
+DEPLOY ?= ${PROG}
+CONTAINER ?= ${PROG}
+DEV_LANG ?= go
+EXT_TAG ?=
+ARCH ?= x86_64
+####
+
+GIT_VERSION = `git rev-parse --short HEAD`
+GIT_BRANCH = `git rev-parse --abbrev-ref HEAD`
+GIT_ROOT = `git rev-parse --show-toplevel`
+
+# Modify the following to match your own environment
+REPO ?= registry.cn-hangzhou.aliyuncs.com/myorg-dev
+RLS_REPO ?= registry.cn-hangzhou.aliyuncs.com/myorg-test
+YUN_REPO ?= registry.cn-hangzhou.aliyuncs.com/myorg-image
+DEV_IMG = ${REPO}/${PROG}:${GIT_BRANCH}${EXT_TAG}
+RLS_IMG = ${RLS_REPO}/${PROG}:${RELEASE}
+ifeq (${ARCH},arm64v8)
+DEV_IMG = ${REPO}/${ARCH}/${PROG}:${GIT_BRANCH}${EXT_TAG}
+RLS_IMG = ${RLS_REPO}/${ARCH}/${PROG}:${RELEASE}
+endif
+
+
+BREWABLE = fzf yq jq stern kubectx kubefwd kube-ps1 derailed/k9s/k9s
+BREW = $(shell for b in ${BREWABLE}; do brew install $$b || brew upgrade $$b; done)
+
+PODINFO = $(shell kubectl get pod -l com.myorg.service=${DEPLOY} -o wide --all-namespaces | sed '1d' | fzf)
+NAMESPACES =$(shell kubectl get pod -l com.myorg.service=${DEPLOY} --all-namespaces -o jsonpath='{.items[0].metadata.namespace}')
+
+
+# The following items can be configured
+_go_BUILDER_ = golang-builder:1.13.8-alpine
+_go_BASE_ = netshoot:latest
+_go_RLS_BASE_ = alpine:3.9.2
+_python_BUILDER_ = python:3.7-alpine
+_python_BASE_ = python:3.7-alpine
+_python_RLS_BASE_ = python:3.7-alpine
+_node_BUILDER_ = node:8.15.1-alpine
+_node_BASE_ = node:8.15.1-alpine
+_node_RLS_BASE_ = node:8.15.1-alpine
+_vue_BUILDER_ = ui-builder:2.0-5
+_vue_BASE_ = nginx:1.15.9-alpine
+_vue_RLS_BASE_ = nginx:1.15.9-alpine
+_java_BUILDER_ = openjdk:8
+_java_BASE_ = openjdk:8-jre-v1
+_java_RLS_BASE_ = openjdk:8-jre-v1
+
+
+# You should not change the following
+go_x86_64_BUILDER = ${YUN_REPO}/${_go_BUILDER_}
+go_x86_64_BASE_IMAGE = ${YUN_REPO}/${_go_BASE_}
+go_x86_64_RLS_BASE_IMAGE = ${YUN_REPO}/${_go_RLS_BASE_}
+go_arm64v8_BUILDER = ${YUN_REPO}/${_go_BUILDER_}
+go_arm64v8_BASE_IMAGE = ${YUN_REPO}/${ARCH}/${_go_RLS_BASE_}
+go_arm64v8_RLS_BASE_IMAGE = ${YUN_REPO}/${ARCH}/${_go_RLS_BASE_}
+
+vue_x86_64_BUILDER = ${YUN_REPO}/${_vue_BUILDER_}
+vue_x86_64_BASE_IMAGE = ${YUN_REPO}/${_vue_BASE_}
+vue_x86_64_RLS_BASE_IMAGE = ${YUN_REPO}/${_vue_RLS_BASE_}
+vue_arm64v8_BUILDER = ${YUN_REPO}/${_vue_BUILDER_}
+vue_arm64v8_BASE_IMAGE = ${YUN_REPO}/${ARCH}/${_vue_BASE_}
+vue_arm64v8_RLS_BASE_IMAGE = ${YUN_REPO}/${ARCH}/${_vue_RLS_BASE_}
+
+python_x86_64_BUILDER = N/A
+python_x86_64_BASE_IMAGE = ${YUN_REPO}/${_python_BASE_}
+python_x86_64_RLS_BASE_IMAGE = ${YUN_REPO}/${_python_RLS_BASE_}
+python_arm64v8_BUILDER = N/A
+python_arm64v8_BASE_IMAGE = ${YUN_REPO}/${ARCH}/${_python_BASE_}
+python_arm64v8_RLS_BASE_IMAGE = ${YUN_REPO}/${ARCH}/${_python_BASE_}
+
+node_x86_64_BUILDER = ${YUN_REPO}/${_node_BUILDER_}
+node_x86_64_BASE_IMAGE = ${YUN_REPO}/${_node_BASE_}
+node_x86_64_RLS_BASE_IMAGE = ${YUN_REPO}/${_node_RLS_BASE_}
+node_arm64v8_BUILDER = ${YUN_REPO}/${ARCH}/${_node_BUILDER_}
+node_arm64v8_BASE_IMAGE = ${YUN_REPO}/${ARCH}/${_node_BASE_}
+node_arm64v8_ARM_BASE_IMAGE = ${YUN_REPO}/${ARCH}/${_node_BASE_}
+
+java_x86_64_BUILDER = ${YUN_REPO}/${_java_BUILDER_}
+java_x86_64_BASE_IMAGE = ${YUN_REPO}/${_java_BASE_}
+java_x86_64_RLS_BASE_IMAGE = ${YUN_REPO}/${_java_RLS_BASE_}
+java_arm64v8_BUILDER = ${YUN_REPO}/${ARCH}/${_java_BUILDER_}
+java_arm64v8_BASE_IMAGE = ${YUN_REPO}/${ARCH}/${_java_BASE_}
+java_arm64v8_RLS_BASE_IMAGE = ${YUN_REPO}/${ARCH}/${_java_RLS_BASE_}
+
+BUILDER = ${${DEV_LANG}_${ARCH}_BUILDER}
+BASE_IMAGE = ${${DEV_LANG}_${ARCH}_BASE_IMAGE}
+RLS_BASE_IMAGE = ${${DEV_LANG}_${ARCH}_RLS_BASE_IMAGE}
+ARM_BASE_IMAGE = ${${DEV_LANG}_ARM_BASE_IMAGE}
+ARM_GOARCH = arm
+
+DOWNLOAD_URL ?= http://download.myorg.com:1086
+
+
+DOCKER_BASE_BUILD_ARGS = --build-arg BUILDER=${BUILDER} --build-arg gitCommit=${GIT_VERSION}
+ifeq (${ARCH},arm64v8)
+    ifeq (${DEV_LANG},go)
+    DOCKER_BASE_BUILD_ARGS += --build-arg GO_ARCH="${ARM_GOARCH}"
+    endif
+endif
+ifeq (${DEV_LANG},vue)
+    ifeq (${RELEASE},)
+    DOCKER_BASE_BUILD_ARGS += --build-arg version=${GIT_VERSION}
+    else
+    DOCKER_BASE_BUILD_ARGS += --build-arg version=${RELEASE}
+    endif
+endif
+ifeq (${DEV_LANG},go)
+    DOCKER_BASE_BUILD_ARGS += --build-arg DOWNLOAD_URL=${DOWNLOAD_URL}
+endif
+DOCKER_DEV_BUILD_ARGS = ${DOCKER_BASE_BUILD_ARGS} --build-arg BASE_IMAGE=${BASE_IMAGE} --build-arg ARCH=${ARCH}
+DOCKER_RLS_BUILD_ARGS = ${DOCKER_BASE_BUILD_ARGS} --build-arg BASE_IMAGE=${RLS_BASE_IMAGE} --build-arg ARCH=${ARCH}
+
+
+
+
+
+
+default: help
+
+docker:
+	docker build -f Dockerfile --label gitCommit=${GIT_VERSION} ${DOCKER_DEV_BUILD_ARGS} -t ${DEV_IMG} ${TOP_DIR}
+	docker push ${DEV_IMG}
+
+release:
+ifeq ($(RELEASE),)
+	@echo "RELEASE not defined!!!"
+else
+	docker build -f Dockerfile --label gitCommit=${GIT_VERSION} ${DOCKER_RLS_BUILD_ARGS} -t ${RLS_IMG} ${TOP_DIR}
+	docker push ${RLS_IMG}
+endif
+
+build:
+ifeq (${DEV_LANG},go)
+	CGO_ENABLED=0 go build -mod vendor -a -tags netgo -installsuffix netgo -o ${PROG}
+else ifeq (${DEV_LANG},javascript)
+	npm run build
+else
+	@echo "${DEV_LANG} undefined build"
+endif
+
+deploy:
+	kubectl -n ${NAMESPACES} set image deploy,daemonset -l com.myorg.service=${DEPLOY}  ${CONTAINER}=${DEV_IMG}
+
+current:
+	@echo "Currently deployed:"
+	@kubectl get deploy -n ${NAMESPACES} ${DEPLOY} -o jsonpath='{.spec.template.spec.containers[*].image}' | tr ' ' '\n'
+	@echo "\n"
+	@echo "Current pods status:"
+	@kubectl get pod -n ${NAMESPACES} -l com.myorg.service=${DEPLOY} -o wide
+
+spec:
+	@echo "Current spec:"
+	@kubectl get deploy -n ${NAMESPACES} ${DEPLOY} -o json | jq
+
+singleton:
+	kubectl -n ${NAMESPACES} scale deployment ${DEPLOY} --replicas=1
+
+logs:
+	stern -n ${NAMESPACES} ${DEPLOY} -c ${CONTAINER} -l com.myorg.service=${DEPLOY}
+
+rollback:
+	kubectl -n ${NAMESPACES} rollout undo deploy/${DEPLOY}
+
+restart:
+	kubectl -n ${NAMESPACES} rollout restart deploy/${DEPLOY}
+
+shell:
+	kubectl -n ${NAMESPACES} exec -ti $(word 2,${PODINFO}) -c ${CONTAINER} -- /bin/sh
+
+install-tools:
+	$(BREW)
+	curl -sSL https://git.io/get-mo -o /usr/local/bin/mo
+	chmod a+x /usr/local/bin/mo
+
+update-make:
+	@curl -sLo ${TOP_DIR}/Makefile.incl https://github.com/wzhliang/make/raw/master/Makefile.incl
+
+local-env:
+	@sudo kubefwd svc -n ${NAMESPACES} -c ${KUBECONFIG} || echo "\n\n\nMake sure you have proper KUBECONFIG value!"
+
+
+help:
+	@echo
+	@echo '"make build"' to build binary locally.
+	@echo '"make docker"' to build docker imamge or
+	@echo '"make docker-arm"' to build docker image for ARM
+	@echo '"RELEASE=foobar make release"' to build release docker imamge and push to test repo.
+	@echo '"make logs"' to view logs with stern
+	@echo '"make current"' to view currently deployed image'(s)' and pods status
+	@echo '"make spec"' to view deployment YAML
+	@echo '"make deploy"' and '"make rollback"' are obvious.
+	@echo '"make shell"' launches a shell into a container
+	@echo '"make singleton"' scales deployment into a single pod
+	@echo '"make restart"' restart deployment
+	@echo '"make install-tools"' to install tools required.
+	@echo '"make update-make"' to update this file to latest version.
+	@echo
+
