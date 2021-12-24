@@ -1,6 +1,6 @@
 # make
 
-A makefile system that ease the pain of working with multiple micro services in a Kubernetes cluster.
+A Makefile system that ease the pain of working with multiple micro services in a Kubernetes cluster.
 
 Features:
 
